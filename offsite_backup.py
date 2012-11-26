@@ -1,8 +1,10 @@
 #!/usr/bin/python
 PYTHONIOENCODING="utf-8"
 
-import sys, os
+import sys, os, hashlib
 from textwrap import TextWrapper
+
+assert os.stat_float_times()
 
 def print_diag(level, value, linefeed = True):
     if level < config.verbosity:
@@ -22,11 +24,18 @@ def print_diag(level, value, linefeed = True):
 
 CRITICAL, IMPORTANT, INFOMATION, DEBUG, EXTRA_DEBUG = range(5)
 
+UNCHANGED, NEW, UPDATED, BAD_BBF = range(4)
+
 defaults = {
     "sourceBase": (None, "String (required) - The base directory containing content to backup"),
     "backupBase": (None, "String (required) - The base directory to which the backup files should be written"),
     "stateBase": (None, "String (required) - The base directory where the backup state will be stored"),
     "sourceSubDir": (None, "String or list of Strings - The sub-directory/ies of the 'sourceBase' which will be considered for backup"),
+    "useTimestamp": (True, "Boolean - Use the file modification time to determine whether it has been changed"),
+    "useMd5": (False, "Boolean - Use a file's MD5 hash to determine whether it has been changed"),
+    "batchSize": (10, "Integer - The number of out-of-date files to process in one go"),
+    "preBatchCmd": (None, "String - The command to run prior to perform the back up of a batch of files. For example, this could be to mount a webdav file system"),
+    "postBatchCmd": (None, "String - The command to run after performing the back up of a batch of files. For example, this could be to unmount a webdav file system"),
     "verbosity": (2, "Integer (0-5) - Amount of information to output. 0 results in no output"),
 }
 
@@ -90,13 +99,103 @@ try:
 except Exception, e:
     print >> sys.stderr, "Invalid config:", str(e)
 
-try:
-    subdirs = config.sourceSubDir
-except ConfigOptionNotSetException:
-    subdirs = '.'
+def process_batch(batch):
+    print_diag(INFOMATION, "Starting batch")
+    # Firstly, delete any BBF files so that any subsequent failures will not cause a false
+    # negative on future runs
+    for src, bbf, sig in batch:
+        print_diag(INFOMATION, "Deleting %s" % bbf)
+        if os.path.isfile(bbf):
+            os.remove(bbf)
 
-for dirName, subDirs, files in os.walk(config.sourceBase):
+    # TODO: Now, perform the pre-batch stage
+    try:
+        config.preBatchCmd
+    except ConfigOptionNotSetException:
+        pass
+
+    # Now, do the back up itself
+    for src, bbf, sig in batch:
+        print_diag(INFOMATION, "Backing up %s" % src)
+    
+    # TODO: Now, perform the pre-batch stage
+    try:
+        config.postBatchCmd
+    except ConfigOptionNotSetException:
+        pass
+    
+    # Finally, write the bbf files
+    for src, bbf, sig in batch:
+        print_diag(INFOMATION, "Creating %s" % bbf)
+        d = os.path.dirname(bbf)
+        if not os.path.exists(d):
+            os.makedirs(os.path.dirname(bbf))
+        with file(bbf, "w") as f:
+            f.write(repr(sig))
+
+    print_diag(INFOMATION, "Batch done")
+
+try:
+    subDirs = config.sourceSubDir
+except ConfigOptionNotSetException:
+    subDirs = '.'
+
+try:
+    # If subDirs has a strip() method, assume that it is a string-like
+    # object and enclose it in a list. Otherwise, assume that subDirs
+    # is already some kind of iterable
+    subDirs.strip
+    subDirs = [subDirs]
+except AttributeError:
     pass
+
+_TimeStampTolerance = 0.1 # seconds
+
+batch = []
+
+for relDir in subDirs:
+    for dirName, subDirs, files in os.walk(os.path.join(config.sourceBase, relDir)):
+        for f in files:
+            status = UNCHANGED
+            r = os.path.relpath(dirName, config.sourceBase)
+            bbf = os.path.normpath(os.path.join(config.stateBase, r, f + ".bbf"))
+            backup = os.path.normpath(os.path.join(config.backupBase, r, f))
+            src = os.path.normpath(os.path.join(dirName, f))
+
+            md5Hash = ""
+            if config.useMd5:
+                md5 = hashlib.md5()
+                with file(src, "rb") as f:
+                    b = f.read(10240)
+                    while len(b) > 0:
+                        md5.update(b)
+                        b = f.read(10240)
+                md5Hash = md5.hexdigest()
+            mTime = os.path.getmtime(src)
+
+            if os.path.isfile(bbf):
+                try:
+                    oldTime, oldHash = eval(file(bbf).read().strip())
+                    timeDiff = abs(mTime - oldTime)
+                    if (config.useTimestamp and timeDiff > _TimeStampTolerance) or \
+                       (config.useMd5 and md5Hash != oldHash):
+                        print_diag(INFOMATION, "'%s' has been changed" % src)
+                        status = UPDATED
+                except:
+                    print_diag(CRITICAL, "'%s' is not a valid bbf!" % bbf)
+                    status = BAD_BBF
+            else:
+                print_diag(INFOMATION, "'%s' is a new file" % src)
+                status = NEW
+
+            if status != UNCHANGED:
+                batch.append((src, bbf, (mTime, md5Hash)))
+                if len(batch) >= config.batchSize:
+                    process_batch(batch)
+                    batch = []
+
+if len(batch) > 0:
+    process_batch(batch)
 
 if False:
     #!/usr/bin/python
@@ -107,11 +206,8 @@ if False:
     import shutil
     import atexit
 
-    UNCHANGED, NEW, UPDATED, BAD_BBF = range(4)
 
-    _TimeStampTolerance = 0.1 # seconds
 
-    assert os.stat_float_times()
 
     def mountWebDav(dstDir):
         print 'mount point:', boxMountPoint
