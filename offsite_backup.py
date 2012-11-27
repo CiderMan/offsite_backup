@@ -1,7 +1,7 @@
 #!/usr/bin/python
 PYTHONIOENCODING="utf-8"
 
-import sys, os, hashlib
+import sys, os, hashlib, subprocess
 from textwrap import TextWrapper
 
 assert os.stat_float_times()
@@ -104,13 +104,17 @@ def process_batch(batch):
     # Firstly, delete any BBF files so that any subsequent failures will not cause a false
     # negative on future runs
     for src, bbf, sig in batch:
-        print_diag(INFOMATION, "Deleting %s" % bbf)
         if os.path.isfile(bbf):
+            print_diag(INFOMATION, "Deleting %s" % bbf)
             os.remove(bbf)
 
-    # TODO: Now, perform the pre-batch stage
+    # Now, perform the pre-batch stage
     try:
-        config.preBatchCmd
+        process = subprocess.Popen(config.preBatchCmd, shell = True)
+        retcode = process.wait()
+        if retcode != 0:
+            print_diag(CRITICAL, "Pre-batch command failed with return code %d" % retcode)
+            sys.exit(1)
     except ConfigOptionNotSetException:
         pass
 
@@ -118,9 +122,13 @@ def process_batch(batch):
     for src, bbf, sig in batch:
         print_diag(INFOMATION, "Backing up %s" % src)
     
-    # TODO: Now, perform the pre-batch stage
+    # Now, perform the pre-batch stage
     try:
-        config.postBatchCmd
+        process = subprocess.Popen(config.postBatchCmd, shell = True)
+        retcode = process.wait()
+        if retcode != 0:
+            print_diag(CRITICAL, "Post-batch command failed with return code %d" % retcode)
+            sys.exit(1)
     except ConfigOptionNotSetException:
         pass
     
