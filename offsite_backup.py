@@ -1,7 +1,7 @@
 #!/usr/bin/python
 PYTHONIOENCODING="utf-8"
 
-import sys, os, hashlib, subprocess
+import sys, os, hashlib, subprocess, shutil
 from textwrap import TextWrapper
 
 assert os.stat_float_times()
@@ -36,6 +36,7 @@ defaults = {
     "batchSize": (10, "Integer - The number of out-of-date files to process in one go"),
     "preBatchCmd": (None, "String - The command to run prior to perform the back up of a batch of files. For example, this could be to mount a webdav file system"),
     "postBatchCmd": (None, "String - The command to run after performing the back up of a batch of files. For example, this could be to unmount a webdav file system"),
+    "password": (None, "String - Password to use for the 7zip backup file"),
     "verbosity": (2, "Integer (0-5) - Amount of information to output. 0 results in no output"),
 }
 
@@ -103,7 +104,7 @@ def process_batch(batch):
     print_diag(INFOMATION, "Starting batch")
     # Firstly, delete any BBF files so that any subsequent failures will not cause a false
     # negative on future runs
-    for src, bbf, sig in batch:
+    for src, bbf, backup, sig in batch:
         if os.path.isfile(bbf):
             print_diag(INFOMATION, "Deleting %s" % bbf)
             os.remove(bbf)
@@ -119,10 +120,32 @@ def process_batch(batch):
         pass
 
     # Now, do the back up itself
-    for src, bbf, sig in batch:
+    for src, bbf, backup, sig in batch:
         print_diag(INFOMATION, "Backing up %s" % src)
+        name = os.path.basename(src)
+        archive = os.path.join(os.path.dirname(bbf), name + ".7z") # TODO
+        # Create the 7zip command 9as quiet as possible - though still not very quiet)
+        # and use maximum (not ultra due to memory use) TODO: use store for some file types?
+        cmd = ["7z", "-bd", "-mx=7"]
+        try:
+            cmd += ["-p" + config.password]
+        except ConfigOptionNotSetException:
+            pass
+        # Add volume splitting if neccessary
+        # "-v100m"
+        cmd += ["a", archive, src]
+        print_diag(DEBUG, "Compression command: " + " ".join(cmd))
+        process = subprocess.Popen(cmd)
+        retcode = process.wait()
+        if retcode != 0:
+            print_diag(CRITICAL, "Compression failed with return code %d" % retcode)
+            sys.exit(1)
+        backupDir = os.path.dirname(backup)
+        if not os.path.exists(backupDir):
+            os.makedirs(backupDir)
+        shutil.move(archive, backupDir)
     
-    # Now, perform the pre-batch stage
+    # Now, perform the post-batch stage
     try:
         process = subprocess.Popen(config.postBatchCmd, shell = True)
         retcode = process.wait()
@@ -133,7 +156,7 @@ def process_batch(batch):
         pass
     
     # Finally, write the bbf files
-    for src, bbf, sig in batch:
+    for src, bbf, backup, sig in batch:
         print_diag(INFOMATION, "Creating %s" % bbf)
         d = os.path.dirname(bbf)
         if not os.path.exists(d):
@@ -197,7 +220,7 @@ for relDir in subDirs:
                 status = NEW
 
             if status != UNCHANGED:
-                batch.append((src, bbf, (mTime, md5Hash)))
+                batch.append((src, bbf, backup, (mTime, md5Hash)))
                 if len(batch) >= config.batchSize:
                     process_batch(batch)
                     batch = []
@@ -206,65 +229,6 @@ if len(batch) > 0:
     process_batch(batch)
 
 if False:
-    #!/usr/bin/python
-
-    import os
-    import subprocess
-    import sys
-    import shutil
-    import atexit
-
-
-
-
-    def mountWebDav(dstDir):
-        print 'mount point:', boxMountPoint
-        print dstDir
-        print dstDir[0:len(boxMountPoint)]
-        if dstDir[0:len(boxMountPoint)] == boxMountPoint:
-            if Verbose: print 'WebDav mount:', dstDir
-            try:
-                process = subprocess.Popen(["mount", boxMountPoint], cwd = sourceDir)
-                retcode = process.wait()
-                if retcode < 0:
-                    print >>sys.stderr, "Child was terminated by signal", -retcode
-                    raise OSError(retcode, "Mount process error")
-                elif retcode == 0:
-                    # Exit ok
-                    pass
-                else:
-                    print >>sys.stderr, "Child returned", retcode
-                    raise OSError(retcode, "Mount process error")
-            except OSError, e:
-                print >>sys.stderr, "Mount execution failed:", e
-                raise
-        else:
-            if Verbose: print 'Pretend WebDav mount: ', dstDir
-
-    def umountWebDav(dstDir):
-        if dstDir[0:len(boxMountPoint)] == boxMountPoint:
-            if Verbose: print 'WebDav umount:', dstDir
-            if os.path.ismount(boxMountPoint):
-                try:
-                    process = subprocess.Popen(["umount", boxMountPoint], cwd = sourceDir)
-                    retcode = process.wait()
-                    if retcode < 0:
-                        print >>sys.stderr, "Child was terminated by signal", -retcode
-                        raise OSError(retcode, "umount process error")
-                    elif retcode == 0:
-                        # Exit ok
-                        pass
-                    else:
-                        print >>sys.stderr, "Child returned", retcode
-                        raise OSError(retcode, "Umount process error")
-                except OSError, e:
-                    print >>sys.stderr, "Umount execution failed:", e
-                    raise
-            else:
-                if Verbose: print 'Not mounted, so nothing to do:', boxMountPoint
-        else:
-            if Verbose: print 'Pretend WebDav umount:', dstDir
-
     def moveFiles(srcDir, dstDir):
         listOfFiles = os.listdir(srcDir)
         for file in listOfFiles:
