@@ -125,8 +125,8 @@ def process_batch(batch, storeExtensions):
     # Now, do the back up itself
     for src, bbf, backup, sig in batch:
         print_diag(INFOMATION, "Backing up %s" % src)
-        name = os.path.basename(src)
-        archive = os.path.join(os.path.dirname(bbf), name + ".7z") # TODO
+        name = os.path.basename(backup)
+        archive = os.path.join(os.path.dirname(bbf), name) # TODO
         # Create the 7zip command 9as quiet as possible - though still not very quiet)
         # and use maximum (not ultra due to memory use)
         mx = 7
@@ -150,6 +150,10 @@ def process_batch(batch, storeExtensions):
         backupDir = os.path.dirname(backup)
         if not os.path.exists(backupDir):
             os.makedirs(backupDir)
+        if os.path.isfile(backup):
+            os.remove(backup)
+        elif os.path.exists(backup):
+            print_diag(CRITICAL, "Destination exists but is not a file!")
         shutil.move(archive, backupDir)
     
     # Now, perform the post-batch stage
@@ -233,7 +237,7 @@ for relDir in subDirs:
             status = UNCHANGED
             r = os.path.relpath(dirName, config.sourceBase)
             bbf = os.path.normpath(os.path.join(config.stateBase, r, f + ".bbf"))
-            backup = os.path.normpath(os.path.join(config.backupBase, r, f))
+            backup = os.path.normpath(os.path.join(config.backupBase, r, f + ".7z"))
             src = os.path.normpath(os.path.join(dirName, f))
 
             md5Hash = ""
