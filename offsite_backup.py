@@ -39,6 +39,7 @@ defaults = {
     "password": (None, "String - Password to use for the 7zip backup file"),
     "includeExtensions": (None, "List of Strings - The file extensions to back up. If not set, all files are included"),
     "excludeExtensions": (None, "List of Strings - The file extensions to omit from the back up. If not set, no files are excluded"),
+    "storeExtensions": (None, "List of Strings - The file extensions that should not be compressed when being backed up. They will still be placed in a 7zip archive, so volumne splitting and encryption are still supported, but 7zip will not attempt to compress the file"),
     "verbosity": (2, "Integer (0-5) - Amount of information to output. 0 results in no output"),
 }
 
@@ -102,7 +103,7 @@ try:
 except Exception, e:
     print >> sys.stderr, "Invalid config:", str(e)
 
-def process_batch(batch):
+def process_batch(batch, storeExtensions):
     print_diag(INFOMATION, "Starting batch")
     # Firstly, delete any BBF files so that any subsequent failures will not cause a false
     # negative on future runs
@@ -127,8 +128,12 @@ def process_batch(batch):
         name = os.path.basename(src)
         archive = os.path.join(os.path.dirname(bbf), name + ".7z") # TODO
         # Create the 7zip command 9as quiet as possible - though still not very quiet)
-        # and use maximum (not ultra due to memory use) TODO: use store for some file types?
-        cmd = ["7z", "-bd", "-mx=7"]
+        # and use maximum (not ultra due to memory use)
+        mx = 7
+        if storeExtensions is not None:
+            if os.path.splitext(src)[1] in storeExtensions:
+                mx = 0
+        cmd = ["7z", "-bd", "-mx=%d" % mx]
         try:
             cmd += ["-p" + config.password]
         except ConfigOptionNotSetException:
@@ -196,7 +201,7 @@ try:
 except ConfigOptionNotSetException:
     includeExtensions = None
 
-excludeExtensions = []
+excludeExtensions = [".bbf"]
 try:
     for e in config.excludeExtensions:
         if e.startswith("."):
@@ -204,7 +209,17 @@ try:
         else:
             excludeExtensions.append("." + e)
 except ConfigOptionNotSetException:
-    excludeExtensions = None
+    pass
+
+storeExtensions = []
+try:
+    for e in config.storeExtensions:
+        if e.startswith("."):
+            storeExtensions.append(e)
+        else:
+            storeExtensions.append("." + e)
+except ConfigOptionNotSetException:
+    storeExtensions = None
 
 for relDir in subDirs:
     for dirName, subDirs, files in os.walk(os.path.join(config.sourceBase, relDir)):
@@ -250,11 +265,11 @@ for relDir in subDirs:
             if status != UNCHANGED:
                 batch.append((src, bbf, backup, (mTime, md5Hash)))
                 if len(batch) >= config.batchSize:
-                    process_batch(batch)
+                    process_batch(batch, storeExtensions)
                     batch = []
 
 if len(batch) > 0:
-    process_batch(batch)
+    process_batch(batch, storeExtensions)
 
 if False:
     def moveFiles(srcDir, dstDir):
