@@ -37,6 +37,8 @@ defaults = {
     "preBatchCmd": (None, "String - The command to run prior to perform the back up of a batch of files. For example, this could be to mount a webdav file system"),
     "postBatchCmd": (None, "String - The command to run after performing the back up of a batch of files. For example, this could be to unmount a webdav file system"),
     "password": (None, "String - Password to use for the 7zip backup file"),
+    "includeExtensions": (None, "List of Strings - The file extensions to back up. If not set, all files are included"),
+    "excludeExtensions": (None, "List of Strings - The file extensions to omit from the back up. If not set, no files are excluded"),
     "verbosity": (2, "Integer (0-5) - Amount of information to output. 0 results in no output"),
 }
 
@@ -184,9 +186,35 @@ _TimeStampTolerance = 0.1 # seconds
 
 batch = []
 
+includeExtensions = []
+try:
+    for e in config.includeExtensions:
+        if e.startswith("."):
+            includeExtensions.append(e)
+        else:
+            includeExtensions.append("." + e)
+except ConfigOptionNotSetException:
+    includeExtensions = None
+
+excludeExtensions = []
+try:
+    for e in config.excludeExtensions:
+        if e.startswith("."):
+            excludeExtensions.append(e)
+        else:
+            excludeExtensions.append("." + e)
+except ConfigOptionNotSetException:
+    excludeExtensions = None
+
 for relDir in subDirs:
     for dirName, subDirs, files in os.walk(os.path.join(config.sourceBase, relDir)):
         for f in files:
+            ext = os.path.splitext(f)[1]
+            if includeExtensions is not None and ext not in includeExtensions:
+                continue
+            if excludeExtensions is not None and ext in excludeExtensions:
+                continue
+
             status = UNCHANGED
             r = os.path.relpath(dirName, config.sourceBase)
             bbf = os.path.normpath(os.path.join(config.stateBase, r, f + ".bbf"))
