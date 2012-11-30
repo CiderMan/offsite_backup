@@ -1,7 +1,7 @@
 #!/usr/bin/python
 PYTHONIOENCODING="utf-8"
 
-import sys, os, hashlib, subprocess, shutil
+import sys, os, hashlib, subprocess, shutil, datetime
 from textwrap import TextWrapper
 
 assert os.stat_float_times()
@@ -40,6 +40,7 @@ defaults = {
     "includeExtensions": (None, "List of Strings - The file extensions to back up. If not set, all files are included"),
     "excludeExtensions": (None, "List of Strings - The file extensions to omit from the back up. If not set, no files are excluded"),
     "storeExtensions": (None, "List of Strings - The file extensions that should not be compressed when being backed up. They will still be placed in a 7zip archive, so volumne splitting and encryption are still supported, but 7zip will not attempt to compress the file"),
+    "stopDuration": (None, "Integer - Maximum number of minutes of seconds to run. If, at the end of a batch, the script has been running for more than this number of seconds, it will exit. Note that this means that not all files will have been backed up until the script has been run again... and again and again, potentially!"),
     "verbosity": (2, "Integer (0-5) - Amount of information to output. 0 results in no output"),
 }
 
@@ -117,7 +118,7 @@ def process_batch(batch, storeExtensions):
         process = subprocess.Popen(config.preBatchCmd, shell = True)
         retcode = process.wait()
         if retcode != 0:
-            print_diag(CRITICAL, "Pre-batch command failed with return code %d" % retcode)
+            print_diag(CRITICAL, "*** Pre-batch command failed with return code %d" % retcode)
             sys.exit(1)
     except ConfigOptionNotSetException:
         pass
@@ -145,7 +146,7 @@ def process_batch(batch, storeExtensions):
         process = subprocess.Popen(cmd)
         retcode = process.wait()
         if retcode != 0:
-            print_diag(CRITICAL, "Compression failed with return code %d" % retcode)
+            print_diag(CRITICAL, "*** Compression failed with return code %d" % retcode)
             sys.exit(1)
         backupDir = os.path.dirname(backup)
         if not os.path.exists(backupDir):
@@ -153,7 +154,7 @@ def process_batch(batch, storeExtensions):
         if os.path.isfile(backup):
             os.remove(backup)
         elif os.path.exists(backup):
-            print_diag(CRITICAL, "Destination exists but is not a file!")
+            print_diag(CRITICAL, "*** Destination exists but is not a file!")
         shutil.move(archive, backupDir)
     
     # Now, perform the post-batch stage
@@ -161,7 +162,7 @@ def process_batch(batch, storeExtensions):
         process = subprocess.Popen(config.postBatchCmd, shell = True)
         retcode = process.wait()
         if retcode != 0:
-            print_diag(CRITICAL, "Post-batch command failed with return code %d" % retcode)
+            print_diag(CRITICAL, "*** Post-batch command failed with return code %d" % retcode)
             sys.exit(1)
     except ConfigOptionNotSetException:
         pass
@@ -225,6 +226,8 @@ try:
 except ConfigOptionNotSetException:
     storeExtensions = None
 
+startTime = datetime.datetime.now()
+
 for relDir in subDirs:
     for dirName, subDirs, files in os.walk(os.path.join(config.sourceBase, relDir)):
         for f in files:
@@ -260,7 +263,7 @@ for relDir in subDirs:
                         print_diag(INFOMATION, "'%s' has been changed" % src)
                         status = UPDATED
                 except:
-                    print_diag(CRITICAL, "'%s' is not a valid bbf!" % bbf)
+                    print_diag(CRITICAL, "*** '%s' is not a valid bbf!" % bbf)
                     status = BAD_BBF
             else:
                 print_diag(INFOMATION, "'%s' is a new file" % src)
@@ -271,6 +274,13 @@ for relDir in subDirs:
                 if len(batch) >= config.batchSize:
                     process_batch(batch, storeExtensions)
                     batch = []
+                    try:
+                        if (datetime.datetime.now() - startTime).total_seconds() >= config.stopDuration:
+                            print_diag(IMPORTANT, "** Exiting as 'stopDuration' has been exceeded.\n"
+                                                  "** Not all files have checked for backup")
+                            sys.exit(0)
+                    except ConfigOptionNotSetException:
+                        pass
 
 if len(batch) > 0:
     process_batch(batch, storeExtensions)
