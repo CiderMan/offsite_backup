@@ -41,6 +41,7 @@ defaults = {
     "excludeExtensions": (None, "List of Strings - The file extensions to omit from the back up. If not set, no files are excluded"),
     "storeExtensions": (None, "List of Strings - The file extensions that should not be compressed when being backed up. They will still be placed in a 7zip archive, so volumne splitting and encryption are still supported, but 7zip will not attempt to compress the file"),
     "stopDuration": (None, "Integer - Maximum number of minutes of seconds to run. If, at the end of a batch, the script has been running for more than this number of seconds, it will exit. Note that this means that not all files will have been backed up until the script has been run again... and again and again, potentially!"),
+    "stopTime": (None, "Integer or Tuple of 2 Integers - The time (either hour or hour and minutes) in 24hr clock at which the script will stop. It will only stop after completing a batch so may actually run for a while after this time"),
     "verbosity": (2, "Integer (0-5) - Amount of information to output. 0 results in no output"),
 }
 
@@ -228,6 +229,22 @@ except ConfigOptionNotSetException:
 
 startTime = datetime.datetime.now()
 
+try:
+    stopDuration = config.stopDuration
+except ConfigOptionNotSetException:
+    stopTime = config.stopTime
+    try:
+        stopTime = startTime.replace(hour = stopTime[0], minute = stopTime[1], second = 0)
+    except TypeError:
+        stopTime = startTime.replace(hour = stopTime, minute = 0, second = 0)
+    if stopTime < startTime:
+        stopTime += datetime.timedelta(hours = 24)
+    stopDuration = stopTime - startTime
+    print_diag(INFOMATION, "Will run for up to " + str(stopDuration))
+    stopDuration = stopDuration.total_seconds()
+except ConfigOptionNotSetException:
+    stopDuration = None
+
 for relDir in subDirs:
     for dirName, subDirs, files in os.walk(os.path.join(config.sourceBase, relDir)):
         for f in files:
@@ -274,13 +291,11 @@ for relDir in subDirs:
                 if len(batch) >= config.batchSize:
                     process_batch(batch, storeExtensions)
                     batch = []
-                    try:
-                        if (datetime.datetime.now() - startTime).total_seconds() >= config.stopDuration:
-                            print_diag(IMPORTANT, "** Exiting as 'stopDuration' has been exceeded.\n"
+                    if stopDuration is not None:
+                        if (datetime.datetime.now() - startTime).total_seconds() >= stopDuration:
+                            print_diag(IMPORTANT, "** Exiting as 'stopDuration' or 'stopTime has been exceeded.\n"
                                                   "** Not all files have checked for backup")
                             sys.exit(0)
-                    except ConfigOptionNotSetException:
-                        pass
 
 if len(batch) > 0:
     process_batch(batch, storeExtensions)
