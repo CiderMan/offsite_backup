@@ -339,8 +339,6 @@ if False:
         os.remove(lockFile)
 
     if __name__ == "__main__":
-        Verbose = True
-     
         # Lock file
         lockFile = os.path.normpath("/home/bill/.sync-lock")
         if os.path.exists(lockFile):
@@ -349,86 +347,4 @@ if False:
         if Verbose: print "Creating lock file"
         atexit.register(delLock, lockFile)
         open(lockFile,'w').close()
-
-        # Shutdown file. If present exit cleanly as soon as possible
-        shutdownFile = os.path.normpath("/home/bill/.sync-exit")
-        if Verbose: print "Shutdown file:", shutdownFile
-        if os.path.exists(shutdownFile):
-            print "Exiting early because shutdown file present."
-            print "Delete shutdown file:", shutdownFile
-            exit(1)
-
-        # Box mount point
-        boxMountPoint = '/media/box.net'
-
-        # Box root
-        boxDir = boxMountPoint
-        #boxDir = os.path.normpath("/home/bill/box_sim")
-        if Verbose: print "Box dir:", boxDir
-        atexit.register(umountWebDav, boxDir)
-
-        # sourceDir = os.path.normpath("/media/storage/pictures")
-        sourceDir = os.path.normpath("/home/bill/2002")
-        if Verbose: print "Source dir:", sourceDir
-
-        # Remote target dir
-        targetDir = os.path.join(boxDir, "pictures")
-        if Verbose: print "Box target dir:", targetDir
-
-        os.path.join(boxDir, "Box BBF backup dir:")
-        bbfBackupDir = os.path.join(boxDir, "bbf_backup")
-        if Verbose: print "Box BBF backup dir:", bbfBackupDir
-
-        tmpDir = os.path.normpath("/home/bill/tmp/sync")
-        if not os.path.exists(tmpDir):
-          if Verbose: print 'Creating tmp dir:', tmpDir
-          os.makedirs(tmpDir)
-        else:
-          if Verbose: print 'Checking tmpDir is empty'
-          if not os.listdir(tmpDir) == []:
-            print "tmpDir is'nt empty:", tmpDir
-            exit(1)
-
-        dbDirRoot = os.path.normpath("/home/bill/bbf_db")
-        dbDir = os.path.join(dbDirRoot, "pictures")
-        if Verbose: print 'DB dir:', dbDir
-        if not os.path.exists(dbDir):
-          if Verbose: print 'Creating DB dir:', dbDir
-          os.makedirs(dbDir)
-
-        new = updated = errors = 0
-
-        # exit(1)
-        for status, filename, errs in gen_updated_files(sourceDir, dbDir):
-            if status == NEW:
-                new += 1
-                if Verbose: print 'New file:', filename
-                try:
-                     processFile(filename, targetDir, sourceDir, tmpDir)
-                except:
-                    print 'Error processing file:', filename
-                    errs.append("Error: %s" % filename)
-                    umountWebDav(targetDir)
-            elif status == UPDATED:
-                updated += 1
-                if Verbose: print 'Updated:', filename
-                processFile(filename, targetDir, sourceDir)
-            elif status == BAD_BBF:
-                updated += 1
-                print 'Error:', filename
-            if os.path.exists(shutdownFile):
-                print 'Exiting due to shutdown file:', shutdownFile
-                break
-
-        print new, "new files,", updated, "changed files:", errors, "errors were encountered"
-
-        # Backup BBF files
-        # zip them and copy to box
-
-    # To do
-    # Mount webdav if not already done. Function to test and mount if necessary
-    # Unmount when finished?
-    # What about sync, i.e how do we know it has finished copying
-    # Keep track of amount of data transfered. To allow rate limiting so only so much transfer.
-    # Looks like have to unmount after each write to ensure uploaded
 
