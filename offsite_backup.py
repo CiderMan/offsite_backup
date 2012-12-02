@@ -30,6 +30,7 @@ defaults = {
     "sourceBase": (None, "String (required) - The base directory containing content to backup"),
     "backupBase": (None, "String (required) - The base directory to which the backup files should be written"),
     "stateBase": (None, "String (required) - The base directory where the backup state will be stored"),
+    "tmpDir": (None, "String - The directory where the backup archives will be created before being moved to their final destination"),
     "sourceSubDir": (None, "String or list of Strings - The sub-directory/ies of the 'sourceBase' which will be considered for backup"),
     "useTimestamp": (True, "Boolean - Use the file modification time to determine whether it has been changed"),
     "useMd5": (False, "Boolean - Use a file's MD5 hash to determine whether it has been changed"),
@@ -106,7 +107,7 @@ try:
 except Exception, e:
     print >> sys.stderr, "Invalid config:", str(e)
 
-def process_batch(batch, storeExtensions, volSize):
+def process_batch(batch, storeExtensions, volSize, tmpDir):
     print_diag(INFOMATION, "Starting batch")
     # Firstly, delete any BBF files so that any subsequent failures will not cause a false
     # negative on future runs
@@ -129,7 +130,7 @@ def process_batch(batch, storeExtensions, volSize):
     for src, bbf, backup, sig in batch:
         print_diag(INFOMATION, "Backing up %s" % src)
         name = os.path.basename(backup)
-        archive = os.path.join(os.path.dirname(bbf), name) # TODO - allow a specified tmp dir
+        archive = os.path.join(tmpDir, name)
         archiveName = archive
         # Create the 7zip command (as quiet as possible - though still not very quiet)
         # and use maximum (not ultra due to memory use)
@@ -272,6 +273,11 @@ try:
 except ConfigOptionNotSetException:
     volSize = None
 
+try:
+    tmpDir = config.tmpDir
+except:
+    tmpDir = config.stateBase
+
 for relDir in subDirs:
     for dirName, subDirs, files in os.walk(os.path.join(config.sourceBase, relDir)):
         for f in files:
@@ -316,16 +322,16 @@ for relDir in subDirs:
             if status != UNCHANGED:
                 batch.append((src, bbf, backup, (mTime, md5Hash)))
                 if len(batch) >= config.batchSize:
-                    process_batch(batch, storeExtensions, volSize)
+                    process_batch(batch, storeExtensions, volSize, tmpDir)
                     batch = []
                     if stopDuration is not None:
                         if (datetime.datetime.now() - startTime).total_seconds() >= stopDuration:
-                            print_diag(IMPORTANT, "** Exiting as 'stopDuration' or 'stopTime has been exceeded.\n"
+                            print_diag(IMPORTANT, "** Exiting as 'stopDuration' or 'stopTime' has been exceeded.\n"
                                                   "** Not all files have checked for backup")
                             sys.exit(0)
 
 if len(batch) > 0:
-    process_batch(batch, storeExtensions, volSize)
+    process_batch(batch, storeExtensions, volSize, tmpDir)
 
 if False:
     # Delete lock file
