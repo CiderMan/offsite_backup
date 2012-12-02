@@ -42,6 +42,7 @@ defaults = {
     "storeExtensions": (None, "List of Strings - The file extensions that should not be compressed when being backed up. They will still be placed in a 7zip archive, so volumne splitting and encryption are still supported, but 7zip will not attempt to compress the file"),
     "stopDuration": (None, "Integer - Maximum number of minutes of seconds to run. If, at the end of a batch, the script has been running for more than this number of seconds, it will exit. Note that this means that not all files will have been backed up until the script has been run again... and again and again, potentially!"),
     "stopTime": (None, "Integer or Tuple of 2 Integers - The time (either hour or hour and minutes) in 24hr clock at which the script will stop. It will only stop after completing a batch so may actually run for a while after this time"),
+    "maxFileSize": (None, "Integer - The maximum file size for the backup. Backup files bigger than that will be split into multiple volumes and placed in a directory named after the backed-up file"),
     "verbosity": (2, "Integer (0-5) - Amount of information to output. 0 results in no output"),
 }
 
@@ -105,7 +106,7 @@ try:
 except Exception, e:
     print >> sys.stderr, "Invalid config:", str(e)
 
-def process_batch(batch, storeExtensions):
+def process_batch(batch, storeExtensions, volSize):
     print_diag(INFOMATION, "Starting batch")
     # Firstly, delete any BBF files so that any subsequent failures will not cause a false
     # negative on future runs
@@ -128,8 +129,9 @@ def process_batch(batch, storeExtensions):
     for src, bbf, backup, sig in batch:
         print_diag(INFOMATION, "Backing up %s" % src)
         name = os.path.basename(backup)
-        archive = os.path.join(os.path.dirname(bbf), name) # TODO
-        # Create the 7zip command 9as quiet as possible - though still not very quiet)
+        archive = os.path.join(os.path.dirname(bbf), name) # TODO - allow a specified tmp dir
+        archiveName = archive
+        # Create the 7zip command (as quiet as possible - though still not very quiet)
         # and use maximum (not ultra due to memory use)
         mx = 7
         if storeExtensions is not None:
@@ -140,22 +142,41 @@ def process_batch(batch, storeExtensions):
             cmd += ["-p" + config.password]
         except ConfigOptionNotSetException:
             pass
-        # Add volume splitting if neccessary
-        # "-v100m"
-        cmd += ["a", archive, src]
+        if volSize is not None:
+            # Add volume splitting if neccessary
+            cmd += ["-v%d" % volSize]
+            if not os.path.isdir(archive):
+                os.makedirs(archive)
+            archiveName = os.path.join(archive, os.path.basename(archive))
+        cmd += ["a", archiveName, src]
         print_diag(DEBUG, "Compression command: " + " ".join(cmd))
         process = subprocess.Popen(cmd)
         retcode = process.wait()
         if retcode != 0:
             print_diag(CRITICAL, "*** Compression failed with return code %d" % retcode)
             sys.exit(1)
+        if volSize is not None:
+            # Check to see whether there is just one file or not
+            fs = os.listdir(archive)
+            if len(fs) == 1:
+                print "Moving", fs[0]
+                tmp = os.path.join(os.path.dirname(archive), fs[0])
+                shutil.move(os.path.join(archive, fs[0]), tmp)
+                print "Removing", archive
+                os.rmdir(archive)
+                print "Renaming", tmp, "to", archive
+                os.rename(tmp, archive)
         backupDir = os.path.dirname(backup)
         if not os.path.exists(backupDir):
             os.makedirs(backupDir)
         if os.path.isfile(backup):
             os.remove(backup)
+        elif os.path.isdir(backup):
+            for f in os.listdir(backup):
+                os.remove(os.path.join(backup, f))
+            os.rmdir(backup)
         elif os.path.exists(backup):
-            print_diag(CRITICAL, "*** Destination exists but is not a file!")
+            print_diag(CRITICAL, "*** Destination exists but is not a file or directory!")
         shutil.move(archive, backupDir)
     
     # Now, perform the post-batch stage
@@ -245,6 +266,11 @@ except ConfigOptionNotSetException:
 except ConfigOptionNotSetException:
     stopDuration = None
 
+try:
+    volSize = config.maxFileSize
+except ConfigOptionNotSetException:
+    volSize = None
+
 for relDir in subDirs:
     for dirName, subDirs, files in os.walk(os.path.join(config.sourceBase, relDir)):
         for f in files:
@@ -289,7 +315,7 @@ for relDir in subDirs:
             if status != UNCHANGED:
                 batch.append((src, bbf, backup, (mTime, md5Hash)))
                 if len(batch) >= config.batchSize:
-                    process_batch(batch, storeExtensions)
+                    process_batch(batch, storeExtensions, volSize)
                     batch = []
                     if stopDuration is not None:
                         if (datetime.datetime.now() - startTime).total_seconds() >= stopDuration:
@@ -298,7 +324,7 @@ for relDir in subDirs:
                             sys.exit(0)
 
 if len(batch) > 0:
-    process_batch(batch, storeExtensions)
+    process_batch(batch, storeExtensions, volSize)
 
 if False:
     # Delete lock file
