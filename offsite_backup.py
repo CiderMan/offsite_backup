@@ -42,7 +42,7 @@ defaults = {
     "storeExtensions": (None, "List of Strings - The file extensions that should not be compressed when being backed up. They will still be placed in a 7zip archive, so volumne splitting and encryption are still supported, but 7zip will not attempt to compress the file"),
     "stopDuration": (None, "Integer - Maximum number of minutes of seconds to run. If, at the end of a batch, the script has been running for more than this number of seconds, it will exit. Note that this means that not all files will have been backed up until the script has been run again... and again and again, potentially!"),
     "stopTime": (None, "Integer or Tuple of 2 Integers - The time (either hour or hour and minutes) in 24hr clock at which the script will stop. It will only stop after completing a batch so may actually run for a while after this time"),
-    "maxFileSize": (None, "Integer - The maximum file size for the backup. Backup files bigger than that will be split into multiple volumes and placed in a directory named after the backed-up file"),
+    "maxFileSize": (None, "Integer or String - The maximum file size for the backup. Backup files bigger than that will be split into multiple volumes and placed in a directory named after the backed-up file. Can be the maximum size in bytes or a string suitable to pass to 7zip's -v option"),
     "verbosity": (2, "Integer (0-5) - Amount of information to output. 0 results in no output"),
 }
 
@@ -144,7 +144,7 @@ def process_batch(batch, storeExtensions, volSize):
             pass
         if volSize is not None:
             # Add volume splitting if neccessary
-            cmd += ["-v%d" % volSize]
+            cmd += ["-v%s" % str(volSize)]
             if not os.path.isdir(archive):
                 os.makedirs(archive)
             archiveName = os.path.join(archive, os.path.basename(archive))
@@ -159,12 +159,13 @@ def process_batch(batch, storeExtensions, volSize):
             # Check to see whether there is just one file or not
             fs = os.listdir(archive)
             if len(fs) == 1:
-                print "Moving", fs[0]
+                # This didn't need to be split into multiple volumes so move the file
+                # into the base directory
                 tmp = os.path.join(os.path.dirname(archive), fs[0])
                 shutil.move(os.path.join(archive, fs[0]), tmp)
-                print "Removing", archive
+                # Now remove the directory that we created
                 os.rmdir(archive)
-                print "Renaming", tmp, "to", archive
+                # And rename the archive to the expected name
                 os.rename(tmp, archive)
         backupDir = os.path.dirname(backup)
         if not os.path.exists(backupDir):
