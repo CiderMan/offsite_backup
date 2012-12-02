@@ -110,7 +110,7 @@ def signal_to_exception(sig, frame):
 hook = ["SIGTERM", "SIGINT", "SIGHUP"]
 for sig in hook:
     signal.signal(getattr(signal, sig), signal_to_exception)
-    print_diag(CRITICAL, "Hooked " + sig)
+    print_diag(EXTRA_DEBUG, "Hooked " + sig)
 
 try:
     config.sourceBase
