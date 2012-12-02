@@ -1,7 +1,7 @@
 #!/usr/bin/python
 PYTHONIOENCODING="utf-8"
 
-import sys, os, hashlib, subprocess, shutil, datetime
+import sys, os, hashlib, subprocess, shutil, datetime, signal
 from textwrap import TextWrapper
 
 assert os.stat_float_times()
@@ -100,6 +100,18 @@ The config file is a python script setting some or all of the following variable
 else:
     config(sys.argv[1])
 
+def signal_to_exception(sig, frame):
+    for attribute in dir(signal):
+        if attribute.startswith("SIG"):
+            if getattr(signal, attribute) is sig:
+                raise Exception("Got signal %s (%d)" % (attribute, sig))
+    raise Exception("Got signal %d" % sig)
+
+hook = ["SIGTERM", "SIGINT", "SIGHUP"]
+for sig in hook:
+    signal.signal(getattr(signal, sig), signal_to_exception)
+    print_diag(CRITICAL, "Hooked " + sig)
+
 try:
     config.sourceBase
     config.backupBase
@@ -127,60 +139,71 @@ def process_batch(batch, storeExtensions, volSize, tmpDir):
         pass
 
     # Now, do the back up itself
-    for src, bbf, backup, sig in batch:
-        print_diag(INFOMATION, "Backing up %s" % src)
-        name = os.path.basename(backup)
-        archive = os.path.join(tmpDir, name)
-        archiveName = archive
-        # Create the 7zip command (as quiet as possible - though still not very quiet)
-        # and use maximum (not ultra due to memory use)
-        mx = 7
-        if storeExtensions is not None:
-            if os.path.splitext(src)[1] in storeExtensions:
-                mx = 0
-        cmd = ["7z", "-bd", "-mx=%d" % mx]
+    try:
+        for src, bbf, backup, sig in batch:
+            print_diag(INFOMATION, "Backing up %s" % src)
+            name = os.path.basename(backup)
+            archive = os.path.join(tmpDir, name)
+            archiveName = archive
+            # Create the 7zip command (as quiet as possible - though still not very quiet)
+            # and use maximum (not ultra due to memory use)
+            mx = 7
+            if storeExtensions is not None:
+                if os.path.splitext(src)[1] in storeExtensions:
+                    mx = 0
+            cmd = ["7z", "-bd", "-mx=%d" % mx]
+            try:
+                cmd += ["-p" + config.password]
+            except ConfigOptionNotSetException:
+                pass
+            if volSize is not None:
+                # Add volume splitting if neccessary
+                cmd += ["-v%s" % str(volSize)]
+                if not os.path.isdir(archive):
+                    os.makedirs(archive)
+                archiveName = os.path.join(archive, os.path.basename(archive))
+            cmd += ["a", archiveName, src]
+            print_diag(DEBUG, "Compression command: " + " ".join(cmd))
+            process = subprocess.Popen(cmd)
+            retcode = process.wait()
+            if retcode != 0:
+                print_diag(CRITICAL, "*** Compression failed with return code %d" % retcode)
+                sys.exit(1)
+            if volSize is not None:
+                # Check to see whether there is just one file or not
+                fs = os.listdir(archive)
+                if len(fs) == 1:
+                    # This didn't need to be split into multiple volumes so move the file
+                    # into the base directory
+                    tmp = os.path.join(os.path.dirname(archive), fs[0])
+                    shutil.move(os.path.join(archive, fs[0]), tmp)
+                    # Now remove the directory that we created
+                    os.rmdir(archive)
+                    # And rename the archive to the expected name
+                    os.rename(tmp, archive)
+            backupDir = os.path.dirname(backup)
+            if not os.path.exists(backupDir):
+                os.makedirs(backupDir)
+            if os.path.isfile(backup):
+                os.remove(backup)
+            elif os.path.isdir(backup):
+                for f in os.listdir(backup):
+                    os.remove(os.path.join(backup, f))
+                os.rmdir(backup)
+            elif os.path.exists(backup):
+                print_diag(CRITICAL, "*** Destination exists but is not a file or directory!")
+            shutil.move(archive, backupDir)
+    except Exception, e:
+        print_diag(CRITICAL, "*** Caught exception when backing up!")
         try:
-            cmd += ["-p" + config.password]
+            process = subprocess.Popen(config.postBatchCmd, shell = True)
+            retcode = process.wait()
+            if retcode != 0:
+                print_diag(CRITICAL, "*** Post-batch command failed with return code %d" % retcode)
         except ConfigOptionNotSetException:
             pass
-        if volSize is not None:
-            # Add volume splitting if neccessary
-            cmd += ["-v%s" % str(volSize)]
-            if not os.path.isdir(archive):
-                os.makedirs(archive)
-            archiveName = os.path.join(archive, os.path.basename(archive))
-        cmd += ["a", archiveName, src]
-        print_diag(DEBUG, "Compression command: " + " ".join(cmd))
-        process = subprocess.Popen(cmd)
-        retcode = process.wait()
-        if retcode != 0:
-            print_diag(CRITICAL, "*** Compression failed with return code %d" % retcode)
-            sys.exit(1)
-        if volSize is not None:
-            # Check to see whether there is just one file or not
-            fs = os.listdir(archive)
-            if len(fs) == 1:
-                # This didn't need to be split into multiple volumes so move the file
-                # into the base directory
-                tmp = os.path.join(os.path.dirname(archive), fs[0])
-                shutil.move(os.path.join(archive, fs[0]), tmp)
-                # Now remove the directory that we created
-                os.rmdir(archive)
-                # And rename the archive to the expected name
-                os.rename(tmp, archive)
-        backupDir = os.path.dirname(backup)
-        if not os.path.exists(backupDir):
-            os.makedirs(backupDir)
-        if os.path.isfile(backup):
-            os.remove(backup)
-        elif os.path.isdir(backup):
-            for f in os.listdir(backup):
-                os.remove(os.path.join(backup, f))
-            os.rmdir(backup)
-        elif os.path.exists(backup):
-            print_diag(CRITICAL, "*** Destination exists but is not a file or directory!")
-        shutil.move(archive, backupDir)
-    
+        raise e
+        
     # Now, perform the post-batch stage
     try:
         process = subprocess.Popen(config.postBatchCmd, shell = True)
@@ -275,7 +298,7 @@ except ConfigOptionNotSetException:
 
 try:
     tmpDir = config.tmpDir
-except:
+except ConfigOptionNotSetException:
     tmpDir = config.stateBase
 
 for relDir in subDirs:
