@@ -276,7 +276,7 @@ except ConfigOptionNotSetException:
 startTime = datetime.datetime.now()
 
 try:
-    stopDuration = config.stopDuration
+    stopDuration = datetime.timedelta(seconds = config.stopDuration)
 except ConfigOptionNotSetException:
     stopTime = config.stopTime
     try:
@@ -287,7 +287,6 @@ except ConfigOptionNotSetException:
         stopTime += datetime.timedelta(hours = 24)
     stopDuration = stopTime - startTime
     print_diag(INFOMATION, "Will run for up to " + str(stopDuration))
-    stopDuration = stopDuration.total_seconds()
 except ConfigOptionNotSetException:
     stopDuration = None
 
@@ -348,7 +347,7 @@ for relDir in subDirs:
                     process_batch(batch, storeExtensions, volSize, tmpDir)
                     batch = []
                     if stopDuration is not None:
-                        if (datetime.datetime.now() - startTime).total_seconds() >= stopDuration:
+                        if (datetime.datetime.now() - startTime) >= stopDuration:
                             print_diag(IMPORTANT, "** Exiting as 'stopDuration' or 'stopTime' has been exceeded.\n"
                                                   "** Not all files have checked for backup")
                             sys.exit(0)
